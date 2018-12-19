@@ -10,7 +10,7 @@ the Latent Representation".
 
 ## Usage
 
-Pretrained models are availbale for LeNet, AlexNet ,and VGG16. To test with existing models you can specicy modelname and dataset.
+Pretrained models are availbale for LeNet, AlexNet ,and VGG16. To test with existing models you should specify modelname and dataset.
 
 For example:
 
