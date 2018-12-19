@@ -16,4 +16,4 @@ For example:
 
     $ python latent_pert.py --model alexnet --dataset mnist
     $ python latent_pert.py --model vgg --dataset svhn
-Pretrained models can be downloaded from [https://drive.google.com/open?id=1EpKWuXeMQWVqpPSpOd4VrNbA8l45QlOQ](https://drive.google.com/open?id=1EpKWuXeMQWVqpPSpOd4VrNbA8l45QlOQ)
+Pretrained models can be downloaded from [here](https://drive.google.com/open?id=1EpKWuXeMQWVqpPSpOd4VrNbA8l45QlOQ)
