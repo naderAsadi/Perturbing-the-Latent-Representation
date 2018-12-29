@@ -1,4 +1,4 @@
-# Latent Representation Perturbation
+# Perturbing the Latent Representation
 
 Implementation of "A Novel Image Perturbation Approach: Perturbing
 the Latent Representation".
