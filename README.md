@@ -1,6 +1,6 @@
 # Latent Representation Perturbation
 
-Pytorch implementation of "A Novel Image Perturbation Approach: Perturbing
+Implementation of "A Novel Image Perturbation Approach: Perturbing
 the Latent Representation".
 
 ## Prerequisites
