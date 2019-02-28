@@ -7,176 +7,233 @@ import torch.nn.functional as F
 
 from models import CAE, LeNet, AlexNet, VGG, load_model
 
-parser = argparse.ArgumentParser(description='Defensive GAN')
-parser.add_argument('--model', type=str, default='lenet', help='Target classifier model: "lenet" or "alexnet" or "vgg"')
-parser.add_argument('--dataset', type=str, default='mnist', help='Dataset : "mnist" , "svhn"')
-parser.add_argument('--dataroot', type=str, default='~/AI/Datasets/mnist/data', help='Dataset root. Default is "./datasets"')
-opt = parser.parse_args()
+def get_loader(dataset, image_size, dataroot):
+    """
+    Returns required dataloader
+    :param dataset:
+    :return dataloader:
+    """
+    if dataset == 'mnist':
+        loader = torch.utils.data.DataLoader(
+            torchvision.datasets.MNIST(dataroot, train=False, download=True,
+                                       transform=torchvision.transforms.Compose([
+                                           torchvision.transforms.Resize(image_size),
+                                           torchvision.transforms.ToTensor(),
+                                       ])),
+            batch_size=1, shuffle=True)
+    elif dataset == 'svhn':
+        loader = torch.utils.data.DataLoader(
+            torchvision.datasets.MNIST(dataroot, train=False , download=True,
+                                       transform=torchvision.transforms.Compose([
+                                            torchvision.transforms.Resize(image_size),
+                                            torchvision.transforms.ToTensor(),
+                                        ])),
+            batch_size=1, shuffle=True)
+    return loader
 
-###############
-# Parameters
-###############
-epsilons = [0.1, 0.2, 0.3]
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-image_size = 32*32
-lr = 0.001
-if opt.dataset == 'svhn':
-    channels = 3
-else:
-    channels = 1
+def get_model(name, device):
+    """
+    Returns required classifier and autoencoder
+    :param name:
+    :return: Autoencoder, Classifier
+    """
+    if name == 'lenet':
+        model = LeNet(in_channels=channels).to(device)
+    elif name == 'alexnet':
+        model = AlexNet(channels=channels, num_classes=10).to(device)
+    elif name == 'vgg':
+        model = VGG(in_channels=channels, num_classes=10).to(device)
 
-###############
-# Dataset
-###############
-print(opt.dataroot)
-mnist_loader = torch.utils.data.DataLoader(
-    torchvision.datasets.MNIST(opt.dataroot, train=False , download=True, transform=torchvision.transforms.Compose([
-        torchvision.transforms.Resize(32),
-        torchvision.transforms.ToTensor(),
-        ])),
-    batch_size=1, shuffle=True)
+    autoencoder = CAE(in_channels=channels).to(device)
+    return model, autoencoder
 
-# svhn_loader = torch.utils.data.DataLoader(
-#     torchvision.datasets.SVHN(opt.dataroot, split='test', download=True, transform=torchvision.transforms.Compose([
-#         torchvision.transforms.Resize(32),
-#         torchvision.transforms.ToTensor(),
-#         ])),
-#     batch_size=1, shuffle=True)
+def get_optimizer(model, lr):
+    """
+    Returns Adam optimizer for the model
+    :param model:
+    :param lr:
+    :return Adam optimizer:
+    """
+    return torch.optim.Adam(model.parameters(), lr=lr)
 
-###############
-# Models
-###############
-autoencoder = CAE(in_channels=channels).to(device)
-lenet = LeNet(in_channels=channels).to(device)
-alexnet = AlexNet(channels=channels, num_classes=10).to(device)
-vgg = VGG(in_channels=channels, num_classes=10).to(device)
+def load(model, optimizer, root):
+    """
+    Returns pretrained model with optimizer and final training epoch
+    :param model:
+    :param optimizer:
+    :param root:
+    :return:
+    """
+    model, optimizer, epoch = load_model(model, optimizer, root)
+    return model, optimizer, epoch
 
-#####################
-# Optimizer & Loss
-#####################
-optim_lenet = torch.optim.Adam(lenet.parameters(), lr=lr)
-optim_alexnet = torch.optim.Adam(alexnet.parameters(), lr=lr)
-optim_vgg = torch.optim.Adam(vgg.parameters(), lr=lr)
-optimizer_ae = torch.optim.Adam(autoencoder.parameters(), lr=lr)
+class Attack(object):
+    """
+    Attack class represents different perturbation methods
+    """
+    def __init__(self, model, autoencoder, loss_func):
+        super(Attack, self).__init__()
+        self.model = model
+        self.autoencoder = autoencoder
+        self.loss_func = loss_func
 
-###############
-# Pretrain
-###############
-if channels == 1:
-    lenet,_,_ = load_model(lenet, optimizer=optim_lenet, root='./saved_models/lenet_mnist32.pth')
-    alexnet,_,_ = load_model(alexnet, optimizer=optim_alexnet, root='./saved_models/alexnet_mnist.pth')
-    vgg,_,_ = load_model(vgg, optimizer=optim_vgg, root='./saved_models/vgg16_mnist.pth')
-    autoencoder,_,_ = load_model(autoencoder, optimizer=optimizer_ae, root='./saved_models/cae_mnist32.pth')
-else:
-    print('svhn models')
-    #lenet, _, _ = load_model(lenet, optimizer=optim_lenet, root='./saved_models/lenet_svhn.pth')
-    alexnet, _, _ = load_model(alexnet, optimizer=optim_alexnet, root='./saved_models/alexnet_svhn.pth')
-    vgg, _, _ = load_model(vgg, optimizer=optim_vgg, root='./saved_models/vgg16_svhn.pth')
-    autoencoder, _, _ = load_model(autoencoder, optimizer=optimizer_ae, root='./saved_models/cae_svhn.pth')
+    def fgsm(self, image, label, eps=0.3):
+        image.requires_grad = True
+        out = model(image)
+        loss = self.loss_func(out, label)
+        loss.backward()
+        image_grad = image.grad.data
 
-##############
-# FSGM
-##############
-def simple_fsgm_attack(image, epsilon, data_grad):
-    sign_grad = data_grad.sign()
-    perturbed_image = image + epsilon * sign_grad
-    perturbed_image = torch.clamp(perturbed_image, 0, 1)
-    return perturbed_image
+        sign_grad = image_grad.sign()
+        perturbed_image = image + eps * sign_grad
+        perturbed_image = torch.clamp(perturbed_image, 0, 1)
+        return perturbed_image
 
-def fgsm(model, data, channels, target, epsilon, i, modelname):
-    data.requires_grad = True
-    output = model(data)
-    init_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
-    if init_pred.item() != target.item():
-        return
-    loss = F.nll_loss(output, target)
-    model.zero_grad()
-    loss.backward()
-    data_grad = data.grad.data
-    perturbed_data = simple_fsgm_attack(data, epsilon, data_grad)
-    output = model(perturbed_data)
-    pred = output.max(1, keepdim=True)[1]
+    def latent_fgsm(self, data, label, eps=0.3):
+        latent = autoencoder.forward_encoder(data)
+        latent = Variable(latent, requires_grad=True)
+        data = autoencoder.forward_decoder(latent)
 
-    torchvision.utils.save_image(perturbed_data.reshape(-1, channels, 32, 32).data,
-                                filename='./res/{}_{}_{}.png'.format(epsilon,i , pred.item()))
+        out = model(data)
+        loss = self.loss_func(out, label)
+        loss.backward()
+        latent_grad = latent.grad.data
+        sign_grad = latent_grad.sign()
+        perturbed_latent = latent + eps * sign_grad
 
-##############
-# Test
-##############
-def test(model , device, test_loader, eps ):
-    correct = 0
-    adv_examples = []
-    i = 1
+        perturbed_image = autoencoder.forward_decoder(perturbed_latent)
+        perturbed_image = torch.clamp(perturbed_image, 0, 1)
+        return perturbed_image
 
-    for data, target in test_loader:
+    def i_fgsm(self, image, label, eps=0.03, alpha=1, iteration=1, x_val_min=-1, x_val_max=1):
+        x_adv = Variable(image.data, requires_grad=True)
+        for i in range(iteration):
+            h_adv = self.model(x_adv)
+            loss = -self.loss_func(h_adv, label)
+
+            self.model.zero_grad()
+            loss.backward()
+
+            x_adv.grad.sign_()
+            x_adv = x_adv - alpha * x_adv.grad
+            x_adv = self._where(x_adv > image + eps, image + eps, x_adv)
+            x_adv = self._where(x_adv < image - eps, image - eps, x_adv)
+            x_adv = torch.clamp(x_adv, x_val_min, x_val_max)
+            x_adv = Variable(x_adv.data, requires_grad=True)
+
+        h = self.model(image)
+        h_adv = self.model(x_adv)
+
+        return x_adv
+
+    def latent_i_fgsm(self, image, label, eps=0.03, alpha=1, iteration=1, x_val_min=-1, x_val_max=1):
+        latent = autoencoder.forward_encoder(image)
+        latent = Variable(latent, requires_grad=True)
+        for i in range(iteration):
+            x_adv = self.autoencoder.forward_decoder(latent)
+            h_adv = self.model(x_adv)
+            loss = -self.loss_func(h_adv, label)
+
+            self.model.zero_grad()
+            loss.backward()
+
+            latent.grad.sign_()
+            latent_adv = latent - alpha * latent.grad
+            latent_adv = self._where(latent_adv > latent + eps, latent + eps, latent_adv)
+            latent_adv = self._where(latent_adv < latent - eps, latent - eps, latent_adv)
+
+            x_adv = self.autoencoder.forward_decoder(latent_adv)
+            x_adv = torch.clamp(x_adv, x_val_min, x_val_max)
+            latent = Variable(latent_adv.data, requires_grad=True)
+
+        h = self.model(image)
+        h_adv = self.model(x_adv)
+
+        return x_adv
+
+    def _where(self, cond, x, y):
+        """
+        code from :
+            https://discuss.pytorch.org/t/how-can-i-do-the-operation-the-same-as-np-where/1329/8
+        """
+        cond = cond.float()
+        return (cond * x) + ((1 - cond) * y)
+
+
+def main(model ,autoencoder ,test_loader, device, eps):
+    attack = Attack(model=model, autoencoder=autoencoder, loss_func=F.nll_loss)
+    fgsm_c = 0
+    ifgsm_c = 0
+    latent_fgsm_c = 0
+    latent_i_fgsm_c = 0
+
+    for i, (data, target) in enumerate(test_loader, 0):
+        if i > 500:
+            break
         data, target = data.to(device), target.to(device)
 
-        encod = autoencoder.forward_encoder(data)
-        encoded = Variable(encod, requires_grad=True)
-        image = autoencoder.forward_decoder(encoded)
-        output = model(image)
-        init_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
-        if init_pred.item() != target.item():
-            continue
-        loss = F.nll_loss(output, target)
-        model.zero_grad()
-        autoencoder.zero_grad()
-        loss.backward()
-        data_grad = encoded.grad.data
-        perturbed_encoded = simple_fsgm_attack(encoded, eps, data_grad)
-        perturbed_data = autoencoder.forward_decoder(perturbed_encoded)
-        output = model(perturbed_data)
-        # Check for success
-        final_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
-        if final_pred.item() != target.item():
-            fgsm(model, data, channels, target, eps, i ,modelname='model')
-            torchvision.utils.save_image(data.data, filename='./res/{}-{}_{}_real.png'.format(eps,i,final_pred.item()))
-            torchvision.utils.save_image(perturbed_data.data, filename='./res/{}-{}_{}_recons.png'.format(eps,i,final_pred.item()))
-            i += 1
-        else:
-            correct += 1
+        # fgsm = attack.fgsm(data, target, eps)
+        # out = model(fgsm)
+        # _, pred = torch.max(out.data, 1)
+        # fgsm_c += (pred == target).sum().item()
+        # torchvision.utils.save_image(data.data, './res/fgsm/{}_real.png'.format(i))
+        # torchvision.utils.save_image(fgsm.data, './res/fgsm/{}_{}_pert.png'.format(i, pred.item()))
+
+        ifgsm = attack.i_fgsm(data, target, eps, iteration=30)
+        out = model(ifgsm)
+        _, pred = torch.max(out.data, 1)
+        ifgsm_c += (pred == target).sum().item()
+        if pred.item() != target.item():
+            torchvision.utils.save_image(data.data, './res/ifgsm/{}_real.png'.format(i))
+            torchvision.utils.save_image(ifgsm.data, './res/ifgsm/{}_{}_{}_pert.png'.format(i, pred.item(), target.item()))
+
+        # lfgsm = attack.latent_fgsm(data, target, eps)
+        # out = model(lfgsm)
+        # _, pred = torch.max(out.data, 1)
+        # latent_fgsm_c += (pred == target).sum().item()
+        # torchvision.utils.save_image(data.data, './res/latent_fgsm/{}_real.png'.format(i))
+        # torchvision.utils.save_image(lfgsm.data, './res/latent_fgsm/{}_{}_pert.png'.format(i, pred.item()))
+
+        l_i_fgsm = attack.latent_i_fgsm(data, target, eps, iteration=30)
+        out = model(l_i_fgsm)
+        _, pred = torch.max(out.data, 1)
+        latent_i_fgsm_c += (pred == target).sum().item()
+        if pred.item() != target.item():
+            torchvision.utils.save_image(data.data, './res/latent_i_fgsm/{}_real.png'.format(i))
+            torchvision.utils.save_image(l_i_fgsm.data, './res/latent_i_fgsm/{}_{}_{}_pert.png'.format(i, pred.item(), target.item()))
 
 
-    # Calculate final accuracy for this eps
-    acc = correct/float(len(test_loader))
-    print("Epsilon: {}\ Accuracy = {}".format(eps, acc))
-    # Return the accuracy and an adversarial example
-    return acc,  adv_examples
 
 #############################
 # Run Test for all epsilons
 #############################
-accs = []
-examples = []
-autoencoder.eval()
-lenet.eval()
-alexnet.eval()
-vgg.eval()
+if __name__ == '__main__':
+    #parser = argparse.ArgumentParser(description='Defensive GAN')
+    #parser.add_argument('--model', type=str, default='lenet',
+    #                    help='Target classifier model: "lenet" or "alexnet" or "vgg"')
+    #parser.add_argument('--dataset', type=str, default='mnist', help='Dataset : "mnist" , "svhn"')
+    #parser.add_argument('--dataroot', type=str, default='~/AI/Datasets/mnist/data',
+    #                    help='Dataset root. Default is "./datasets"')
+    #opt = parser.parse_args()
 
-if opt.model == 'alexnet':
-    print('model alex')
-    model = alexnet
-elif opt.model == 'vgg':
-    print('model vgg')
-    model = vgg
-else:
-    print('model lenet')
-    if channels == 1:
-        model = lenet
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model_name = 'lenet' #opt.model
+    dataset_name = 'mnist' #opt.dataset
+    dataroot = '~/AI/Datasets/mnist/data' #opt.dataroot
+    image_size = 32
+    lr = 0.001
+    if dataset_name == 'svhn':
+        channels = 3
     else:
-        model = alexnet
+        channels = 1
 
-# Run test for each epsilon
-if channels == 1:
-    for eps in epsilons:
-        acc, ex = test(model, device, mnist_loader, eps)
-        accs.append(acc)
-        examples.append(ex)
-else:
-    print('dataset svhn')
-    for eps in epsilons:
-        acc, ex = test(model, device, svhn_loader, eps)
-        accs.append(acc)
-        examples.append(ex)
+    model, autoencoder = get_model(model_name, device)
+    dataloader = get_loader(dataset_name, image_size, dataroot)
 
-print(accs)
+    model_optim = get_optimizer(model, lr)
+    ae_optim = get_optimizer(autoencoder, lr)
+
+    model, model_optim, _ = load(model, model_optim, './saved_models/lenet_mnist32.pth')
+    autoencoder, ae_optim, _ = load(autoencoder, ae_optim, './saved_models/cae_mnist32.pth')
+
+    main(model=model, autoencoder=autoencoder, test_loader=dataloader, device=device, eps=0.01)
