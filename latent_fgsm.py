@@ -1,4 +1,5 @@
 import argparse
+import os
 import torch
 import torchvision
 import torch.utils.data
@@ -167,40 +168,51 @@ def main(model ,autoencoder ,test_loader, device, eps):
     latent_fgsm_c = 0
     latent_i_fgsm_c = 0
 
+    if not os.path.isdir('./res/fgsm'):
+        os.mkdir('./res/fgsm')
+    if not os.path.isdir('./res/ifgsm'):
+        os.mkdir('./res/ifgsm')
+    if not os.path.isdir('./res/ifgsm'):
+        os.mkdir('./res/latent_fgsm')
+    if not os.path.isdir('./res/latent_i_fgsm'):
+        os.mkdir('./res/latent_i_fgsm')
+
     for i, (data, target) in enumerate(test_loader, 0):
-        if i > 500:
-            break
         data, target = data.to(device), target.to(device)
 
-        # fgsm = attack.fgsm(data, target, eps)
-        # out = model(fgsm)
-        # _, pred = torch.max(out.data, 1)
-        # fgsm_c += (pred == target).sum().item()
-        # torchvision.utils.save_image(data.data, './res/fgsm/{}_real.png'.format(i))
-        # torchvision.utils.save_image(fgsm.data, './res/fgsm/{}_{}_pert.png'.format(i, pred.item()))
-
-        ifgsm = attack.i_fgsm(data, target, eps, iteration=30)
+        fgsm = attack.fgsm(data, target, eps)
+        out = model(fgsm)
+        _, pred = torch.max(out.data, 1)
+        fgsm_c += (pred == target).sum().item()
+        if pred.item() != target.item():
+            torchvision.utils.save_image(data.data, './res/fgsm/{}_real.png'.format(i))
+            torchvision.utils.save_image(fgsm.data, './res/fgsm/{}_{}_pert.png'.format(i, pred.item()))
+        
+        ifgsm = attack.i_fgsm(data, target, eps, iteration=10)
         out = model(ifgsm)
         _, pred = torch.max(out.data, 1)
         ifgsm_c += (pred == target).sum().item()
+        
         if pred.item() != target.item():
-            torchvision.utils.save_image(data.data, './res/ifgsm/{}_real.png'.format(i))
+            torchvision.utils.save_image(ifgsm.data, './res/ifgsm/{}_real.png'.format(i))
             torchvision.utils.save_image(ifgsm.data, './res/ifgsm/{}_{}_{}_pert.png'.format(i, pred.item(), target.item()))
+        
+        lfgsm = attack.latent_fgsm(data, target, eps)
+        out = model(lfgsm)
+        _, pred = torch.max(out.data, 1)
+        latent_fgsm_c += (pred == target).sum().item()
+        if pred.item() != target.item():
+            torchvision.utils.save_image(data.data, './res/latent_fgsm/{}_real.png'.format(i))
+            torchvision.utils.save_image(lfgsm.data, './res/latent_fgsm/{}_{}_pert.png'.format(i, pred.item()))
 
-        # lfgsm = attack.latent_fgsm(data, target, eps)
-        # out = model(lfgsm)
-        # _, pred = torch.max(out.data, 1)
-        # latent_fgsm_c += (pred == target).sum().item()
-        # torchvision.utils.save_image(data.data, './res/latent_fgsm/{}_real.png'.format(i))
-        # torchvision.utils.save_image(lfgsm.data, './res/latent_fgsm/{}_{}_pert.png'.format(i, pred.item()))
-
-        l_i_fgsm = attack.latent_i_fgsm(data, target, eps, iteration=30)
+        l_i_fgsm = attack.latent_i_fgsm(data, target, eps, iteration=10)
         out = model(l_i_fgsm)
         _, pred = torch.max(out.data, 1)
         latent_i_fgsm_c += (pred == target).sum().item()
+        torchvision.utils.save_image(data.data, './res/latent_i_fgsm/0.01/30/{}_real.png'.format(i))
         if pred.item() != target.item():
-            torchvision.utils.save_image(data.data, './res/latent_i_fgsm/{}_real.png'.format(i))
-            torchvision.utils.save_image(l_i_fgsm.data, './res/latent_i_fgsm/{}_{}_{}_pert.png'.format(i, pred.item(), target.item()))
+            torchvision.utils.save_image(data.data, './res/latent_i_fgsm/0.01/30/{}_real.png'.format(i))
+            torchvision.utils.save_image(l_i_fgsm.data, './res/latent_i_fgsm/0.01/30/{}_{}_{}_pert.png'.format(i, pred.item(), target.item()))
 
 
 
@@ -208,18 +220,18 @@ def main(model ,autoencoder ,test_loader, device, eps):
 # Run Test for all epsilons
 #############################
 if __name__ == '__main__':
-    #parser = argparse.ArgumentParser(description='Defensive GAN')
-    #parser.add_argument('--model', type=str, default='lenet',
-    #                    help='Target classifier model: "lenet" or "alexnet" or "vgg"')
-    #parser.add_argument('--dataset', type=str, default='mnist', help='Dataset : "mnist" , "svhn"')
-    #parser.add_argument('--dataroot', type=str, default='~/AI/Datasets/mnist/data',
-    #                    help='Dataset root. Default is "./datasets"')
-    #opt = parser.parse_args()
+    parser = argparse.ArgumentParser(description='Defensive GAN')
+    parser.add_argument('--model', type=str, default='lenet',
+                       help='Target classifier model: "lenet" or "alexnet" or "vgg"')
+    parser.add_argument('--dataset', type=str, default='mnist', help='Dataset : "mnist" , "svhn"')
+    parser.add_argument('--dataroot', type=str, default='~/AI/Datasets/mnist/data',
+                       help='Dataset root. Default is "./datasets"')
+    opt = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model_name = 'lenet' #opt.model
-    dataset_name = 'mnist' #opt.dataset
-    dataroot = '~/AI/Datasets/mnist/data' #opt.dataroot
+    model_name = opt.model
+    dataset_name = opt.dataset
+    dataroot = opt.dataroot
     image_size = 32
     lr = 0.001
     if dataset_name == 'svhn':
